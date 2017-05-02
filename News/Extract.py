@@ -14,7 +14,8 @@
     limitations under the License.
     ==========================================================================
 """
-from boilerpipe.extract import Extractor
+from newspaper import Article
+import time
 
 
 def extract_txt_from_url(url):
@@ -24,15 +25,10 @@ def extract_txt_from_url(url):
     Returns:
         Extracted text
     """
-    return Extractor('ArticleExtractor', url=url).getText()
+    a = Article(url)
 
+    a.download()
+    a.parse()
 
-def extract_txt_from_html(html):
-    """ Extracts article text from HTML.
-    Args:
-        html: The HTML to retrieve text from
-    Returns:
-        Extracted text
-    """
-    return Extractor('ArticleExtractor', html=html).getText()
+    return a.text
 
