@@ -1,12 +1,16 @@
 import pandas as pd
+import sys
 from time import time
+from datetime import datetime
 from Extract import extract_txt_from_url
 from multiprocessing import Value, Pool
 from ctypes import c_double, c_int
+from newspaper.article import ArticleException
 
 
 # Constants
-MAX_ROWS= 250
+MAX_ROWS = 1000
+EPSILON  = sys.float_info.epsilon
 
 
 def extract_article(url_i):
@@ -15,9 +19,9 @@ def extract_article(url_i):
 
     try:
         text = extract_txt_from_url(url)
-    except Exception as e:
-        #print('[Row {}] Could not access page at: {}'.format(i, url))
-        #print('\tException Message: {}'.format(e))
+    except ArticleException as e:
+        print('[Row {}] Could not access page at: {}'.format(i, url))
+        print('\tException Message: {}'.format(e))
         n_bad_urls.value += 1
         t_bad.value += time() - t0_url
         text = None
@@ -41,13 +45,13 @@ t_good      = Value(c_double, 0.0)  # Total time spent handling good URLs
 t_bad       = Value(c_double, 0.0)  # Total time spent handling bad URLs
 
 # Create Process Pool
-pool = Pool(processes=32)
+pool = Pool(processes=20)
 
 # Iterate over chunks
 for chunk_n, df in enumerate(dfs):
     print('Beginning work on chunk {} of data.'.format(chunk_n))
 
-    n_rows  = df.shape[0]
+    n_rows = df.shape[0]
 
     # Extract text from URLs, df.URL returns a copy
     input_data = [(url, i) for i, url in enumerate(df.URL)]
@@ -58,12 +62,17 @@ for chunk_n, df in enumerate(dfs):
     # Discover df rows to drop
     to_drop   = []
     to_assign = [None] * n_rows
-    for result in results:
+    for i, result in enumerate(results):
         index, text = result
-        if text is None:
+        if (i + 1) % 50 == 0 or i == 0:
+            print('-' * 80)
+            print('{} result(s) processed: {}% of chunk\n'.format(
+                i + 1, float(i + 1) / n_rows))
+
+        if text is None or not len(text):
             to_drop.append(index)
         else:
-            to_assign[index] = text.encode('ascii', 'replace')
+            to_assign[index] = text
 
     # Append articles column to df
     df = df.assign(TEXT=to_assign)
@@ -75,15 +84,13 @@ for chunk_n, df in enumerate(dfs):
     t_elapsed = time() - t0
 
     print('-' * 80)
-    print('Stats:'
-          '\n\tTotal good URLs: {}'
-          '\n\tTotal bad URLs:  {}'
+    print('Stats ({}):'
           '\n\tAvg time per URL (good): {}'
           '\n\tAvg time per URL (bad):  {}'
           '\n\tElapsed time: {} s'
-          '\n'.format(n_good_urls.value, n_bad_urls.value,
-                      t_good.value / float(n_good_urls.value),
-                      t_bad.value / float(n_bad_urls.value),
+          '\n'.format(datetime.now(),
+                      t_good.value / (float(n_good_urls.value) + EPSILON),
+                      t_bad.value / (float(n_bad_urls.value) + EPSILON),
                       t_elapsed))
     print('\tTotal number of "bad" URLs:  {} ({}%)'.format(n_bad_urls.value,
         n_bad_urls.value / float(n_bad_urls.value + n_good_urls.value)))
