@@ -9,9 +9,12 @@ from __future__ import division
 
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
 
 import logging
 import sys
+import re
+import string
 
 from optparse import OptionParser
 from time import time
@@ -61,15 +64,18 @@ op.add_option('--n_features',
 def filter_data(text_array):
     """Filters text data."""
     filtered_texts = []
-    spec_char_re = re.compile('[^a-z0-9 ]')
+    spec_char_re = re.compile('[^\x00-\x7F]+')
+    punc_char_re = re.compile('[^a-z0-9 ]+')
 
     for text in text_array:
         # Make lowercase
         text = text.lower()
-        # Replace special chars with spaces
+        # Replace special chars (unicode) with spaces
         text = spec_char_re.sub(' ', text)
-        # Remove duplicate spaces
+        # Remove duplicate spaces (and \r\t\n)
         text = ' '.join(text.split())
+        # Remove punctuation
+        text = punc_char_re.sub('', text)
 
         filtered_texts.append(text)
 
@@ -82,7 +88,7 @@ def enumerate_targets(targets):
     return [unique.index(target) for target in targets], unique
 
 
-def extract_features(X_train, X_test, y_train, Y_test, use_hashing,
+def extract_features(X_train, X_test, y_train, use_hashing,
                      chi, n_features):
     """Extracts features from text.
 
@@ -104,17 +110,17 @@ def extract_features(X_train, X_test, y_train, Y_test, use_hashing,
         vectorizer = HashingVectorizer(stop_words='english',
                                        non_negative=True,
                                        n_features=n_features)
-        X_train = vectorizer.transform(data_train.data)
+        X_train = vectorizer.transform(X_train)
     else:
         vectorizer = TfidfVectorizer(sublinear_tf=True, max_df=0.5,
                                      stop_words='english')
-        X_train = vectorizer.fit_transform(data_train.data)
+        X_train = vectorizer.fit_transform(X_train)
 
     # Transform testing data
-    X_test = vectorizer.transform(data_test.data)
+    X_test = vectorizer.transform(X_test)
 
-    print('[Train] n_samples: %d, n_features: %d'.format(*X_train.shape))
-    print('[Test]  n_samples: %d, n_features: %d'.format(*X_test.shape))
+    print('[Train] n_samples: {}, n_features: {}'.format(*X_train.shape))
+    print('[Test]  n_samples: {}, n_features: {}'.format(*X_test.shape))
 
     # mapping from integer feature name to original token string
     if opts.use_hashing:
@@ -122,10 +128,10 @@ def extract_features(X_train, X_test, y_train, Y_test, use_hashing,
     else:
         feature_names = vectorizer.get_feature_names()
 
-    if select_chi2:
-        print('Extracting %d best features using a chi-squared test'.format(
+    if chi:
+        print('Extracting {} best features using a chi-squared test'.format(
                 opts.select_chi2))
-        ch2 = SelectKBest(chi2, k=select_chi2)
+        ch2 = SelectKBest(chi2, k=chi)
         X_train = ch2.fit_transform(X_train, y_train)
         X_test = ch2.transform(X_test)
         if feature_names:
@@ -188,19 +194,57 @@ if len(args) > 0:
     sys.exit(1)
 
 
-# TODO Load all data
-all_data, all_targets = ...
+# load all data
+print('Reading in data.')
+df = pd.read_csv('uci-news-inchunks.csv', dtype=object, keep_default_na=False)
+
+# Top 10
+target_subset = [
+    'Reuters',
+    'Huffington Post',
+    'Businessweek',
+    'Contactmusic.com',
+    'Daily Mail',
+    'NASDAQ',
+    'Examiner.com',
+    'Los Angeles Times',
+    'GlobalPost',
+    'RTT News',
+    'TheCelebrityCafe.com'
+]
+
+# Sample data
+if False:
+    print('Sampling data.')
+    df = df.sample(frac=0.1)
+else:
+    print('Extracting subset of news sources.')
+    df = df.loc[df.PUBLISHER.isin(target_subset)]
+
+all_data    = df.TEXT.values
+all_targets = df.PUBLISHER.values
 
 # Filter text data
+print('Filtering text data.')
 all_data_filtered = filter_data(all_data)
 
 # Enumerate targets
+print('Enumerating targets.')
 all_targets_enum, target_names = enumerate_targets(all_targets)
 
+print('{} targets: {}'.format(len(target_names), target_names))
+
 # Split data into train/test
+print('Splitting data into train/test partitions.')
 X_train, X_test, y_train, y_test = train_test_split(
         all_data_filtered, all_targets_enum, test_size=0.67)
 
+# Extract features
+X_train, X_test, feature_names = extract_features(
+        X_train, X_test, y_train, use_hashing=opts.use_hashing,
+        chi=opts.select_chi2, n_features=opts.n_features)
+
+bm_data = (X_train, y_train, X_test, y_test)
 # ******************* MODEL FITTING *********************
 
 results = []
@@ -212,35 +256,38 @@ for clf, name in (
         (RandomForestClassifier(n_estimators=100), 'Random forest')):
     print('_' * 80)
     print(name)
-    results.append(benchmark(clf))
+    results.append(benchmark(clf, *bm_data))
 
 for penalty in ['l2', 'l1']:
     print('_' * 80)
     print('%s penalty' % penalty.upper())
     # Train Liblinear model
     results.append(benchmark(LinearSVC(loss='l2', penalty=penalty,
-                                            dual=False, tol=1e-3)))
+                                            dual=False, tol=1e-3),
+                             *bm_data))
 
     # Train SGD model
     results.append(benchmark(SGDClassifier(alpha=.0001, n_iter=50,
-                                           penalty=penalty)))
+                                           penalty=penalty),
+                             *bm_data))
 
 # Train SGD with Elastic Net penalty
 print('_' * 80)
 print('Elastic-Net penalty')
 results.append(benchmark(SGDClassifier(alpha=.0001, n_iter=50,
-                                       penalty='elasticnet')))
+                                       penalty='elasticnet'),
+                         *bm_data))
 
 # Train NearestCentroid without threshold
 print('_' * 80)
 print('NearestCentroid (aka Rocchio classifier)')
-results.append(benchmark(NearestCentroid()))
+results.append(benchmark(NearestCentroid(), *bm_data))
 
 # Train sparse Naive Bayes classifiers
 print('_' * 80)
 print('Naive Bayes')
-results.append(benchmark(MultinomialNB(alpha=.01)))
-results.append(benchmark(BernoulliNB(alpha=.01)))
+results.append(benchmark(MultinomialNB(alpha=.01), *bm_data))
+results.append(benchmark(BernoulliNB(alpha=.01), *bm_data))
 
 print('_' * 80)
 print('LinearSVC with L1-based feature selection')
@@ -249,11 +296,13 @@ print('LinearSVC with L1-based feature selection')
 results.append(benchmark(Pipeline([
   ('feature_selection', LinearSVC(penalty='l1', dual=False, tol=1e-3)),
   ('classification', LinearSVC())
-])))
+]), *bm_data))
 
 # ********************* PLOTTING **********************
-indices = np.arange(len(results))
+indices = np.arange(len(results)) * 1.3
 
+# Sort results by Kappa
+results = sorted(results, key=lambda x: x[2])
 results = [[x[i] for x in results] for i in range(5)]
 
 clf_names, accuracy, kappa, training_time, test_time = results

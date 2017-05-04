@@ -36,7 +36,8 @@ def extract_article(url_i):
 dfs = pd.read_csv('uci-news-aggregator.csv',
                   usecols=('TITLE', 'URL', 'PUBLISHER'),
                   dtype=object,
-                  chunksize=MAX_ROWS)
+                  chunksize=MAX_ROWS,
+                  keep_default_na=False)
 
 n_bad_urls  = Value(c_int, 0)       # Number of bad URLs (e.g. due to 404)
 n_good_urls = Value(c_int, 0)       # Number of URLs with good data
