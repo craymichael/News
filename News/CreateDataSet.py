@@ -43,8 +43,8 @@ out_file_name = sys.argv[2]
 dfs = pd.read_csv(in_file_name,
                   # usecols=('TITLE', 'URL', 'PUBLISHER'),  # Used for UCI
                   dtype=object,
-                  chunksize=MAX_ROWS,
-                  keep_default_na=False)
+                  keep_default_na=False,
+                  chunksize=MAX_ROWS)
 
 n_bad_urls  = Value(c_int, 0)       # Number of bad URLs (e.g. due to 404)
 n_good_urls = Value(c_int, 0)       # Number of URLs with good data
