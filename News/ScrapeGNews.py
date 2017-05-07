@@ -25,7 +25,7 @@ def scrape_news(search_term, upper_limit=None):
 
             span_els = pagehtml.xpath('//div[@class="slp"] \
                                        /span/text()')
-            urls       += [a.get('href').replace('/url?q=', '', 1)
+            urls       += [a.get('href').replace('/url?q=', '', 1).rsplit('&sa=', 1)[0]
                            for a in a_els]
             publishers += [s.rsplit(' -', 1)[0] for s in span_els]
         else:

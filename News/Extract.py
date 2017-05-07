@@ -30,5 +30,5 @@ def extract_txt_from_url(url):
     a.download()
     a.parse()
 
-    return a.text
+    return a.title + ' ' + a.text
 

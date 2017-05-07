@@ -32,9 +32,16 @@ def extract_article(url_i):
     return (i, text)
 
 
+if len(sys.argv) != 3:
+    print('Usage: python CreateDataSet.py <in filename> <out filename>')
+    sys.exit(-1)
+
+in_file_name  = sys.argv[1]
+out_file_name = sys.argv[2]
+
 # Create dfs (as iterable)
-dfs = pd.read_csv('uci-news-aggregator.csv',
-                  usecols=('TITLE', 'URL', 'PUBLISHER'),
+dfs = pd.read_csv(in_file_name,
+                  # usecols=('TITLE', 'URL', 'PUBLISHER'),  # Used for UCI
                   dtype=object,
                   chunksize=MAX_ROWS,
                   keep_default_na=False)
@@ -102,5 +109,5 @@ for chunk_n, df in enumerate(dfs):
 
     if not df.empty:
         # Save to file
-        df.to_csv('uci-news-inchunks.csv', mode='a', index=False)
+        df.to_csv(out_file_name, mode='a', index=False)
 
