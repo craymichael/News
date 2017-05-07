@@ -1,6 +1,6 @@
 # Project Specific
-uci-news-aggregator.csv
-uci-news-inchunks.csv
+*.csv
+!gender.csv
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
