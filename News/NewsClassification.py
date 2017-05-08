@@ -5,6 +5,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 
+import math
+import operator
 import logging
 import sys
 import re
@@ -12,8 +14,10 @@ import string
 
 from optparse import OptionParser
 from time import time
+from collections import Counter
 
 from textstat.textstat import textstat as ts
+from gender_detector.gender_detector import GenderDetector
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.feature_extraction.text import HashingVectorizer
@@ -57,6 +61,9 @@ op.add_option('--n_features',
 op.add_option('--n_publishers',
               action='store', type=int, default=20,
               help='The top number of publishers to train on.')
+op.add_option('--gender',
+              action='store_true', dest=gb,
+              help='Whether to perform gender bias analysis. Very slow.')
 
 
 def filter_data(text_array):
@@ -84,6 +91,86 @@ def enumerate_targets(targets):
     # Sorted for consistency
     unique = sorted(np.unique(targets))
     return [unique.index(target) for target in targets], unique
+
+
+def text_standard(flesch_reading_score,
+                  smog_score,
+                  flesch_kincaid_score,
+                  coleman_liau_score,
+                  ari_score,
+                  dale_chall_score,
+                  linsear_write_score,
+                  gunning_fog_score):
+    grade = []
+
+    # Appending Flesch Kincaid Grade
+    lower = round(flesch_kincaid_score)
+    upper = math.ceil(flesch_kincaid_score)
+    grade.append(int(lower))
+    grade.append(int(upper))
+
+    # Appending Flesch Reading Easy
+    score = flesch_reading_score
+    if score < 100 and score >= 90:
+        grade.append(5)
+    elif score < 90 and score >= 80:
+        grade.append(6)
+    elif score < 80 and score >= 70:
+        grade.append(7)
+    elif score < 70 and score >= 60:
+        grade.append(8)
+        grade.append(9)
+    elif score < 60 and score >= 50:
+        grade.append(10)
+    elif score < 50 and score >= 40:
+        grade.append(11)
+    elif score < 40 and score >= 30:
+        grade.append(12)
+    else:
+        grade.append(13)
+
+    # Appending SMOG Index
+    lower = round(smog_score)
+    upper = math.ceil(smog_score)
+    grade.append(int(lower))
+    grade.append(int(upper))
+
+    # Appending Coleman_Liau_Index
+    lower = round(coleman_liau_score)
+    upper = math.ceil(coleman_liau_score)
+    grade.append(int(lower))
+    grade.append(int(upper))
+
+    # Appending Automated_Readability_Index
+    lower = round(ari_score)
+    upper = math.ceil(ari_score)
+    grade.append(int(lower))
+    grade.append(int(upper))
+
+    # Appending Dale_Chall_Readability_Score
+    lower = round(dale_chall_score)
+    upper = math.ceil(dale_chall_score)
+    grade.append(int(lower))
+    grade.append(int(upper))
+
+    # Appending Linsear_Write_Formula
+    lower = round(linsear_write_score)
+    upper = math.ceil(linsear_write_score)
+    grade.append(int(lower))
+    grade.append(int(upper))
+
+    # Appending Gunning Fog Index
+    lower = round(gunning_fog_score)
+    upper = math.ceil(gunning_fog_score)
+    grade.append(int(lower))
+    grade.append(int(upper))
+
+    # Finding the Readability Consensus based upon all the above tests
+    d = dict([(x, grade.count(x)) for x in grade])
+    sorted_x = sorted(d.items(), key=operator.itemgetter(1))
+    final_grade = str((sorted_x)[len(sorted_x)-1])
+    score = final_grade.split(',')[0].strip('(')
+    return str(int(score)-1) + 'th ' + 'and ' + str(int(score)) + 'th grade'
 
 
 def extract_features(X_train, X_test, y_train, use_hashing,
@@ -168,7 +255,7 @@ def benchmark(clf, X_train, y_train, X_test, y_test):
         if opts.print_top10 and feature_names is not None:
             print('Top 10 keywords per class:')
             for i, label in enumerate(target_names):
-                top10 = np.argsort(clf.coef_[i])[-20:]
+                top10 = np.argsort(clf.coef_[i])[-10:]
                 print('%s: %s' % (label, ' '.join(feature_names[top10])))
         print()
 
@@ -286,31 +373,93 @@ results.append(benchmark(Pipeline([
 ]), *bm_data))
 
 
-"""# Readability
-flesch_reading_score  = ts.flesch_reading_ease(article_txt)
-smog_score            = ts.smog_index(article_txt)
-flesch_kincaid_score  = ts.flesch_kincaid_grade(test_data)
-coleman_liau_score    = ts.coleman_liau_index(test_data)
-ari_score             = ts.automated_readability_index(test_data)
-dale_chall_score      = ts.dale_chall_readability_score(test_data)
-linsear_write_score   = ts.linsear_write_formula(test_data)
-gunning_fog_score     = ts.gunning_fog(test_data)
-readability_consensus = ts.text_standard(test_data)
+# Readability & Gender Bias
+if opts.gb:
+    print('WARNING: Gender bias specfied. This may incur a long runtime.')
+    gd = GenderDetector('us')
+    override = {}
+    with open('../Data/gender.csv') as f:
+        for line in f:
+            term, gender = line.replace(' ', '').replace('\n', '').split(',')
+            override[term] = gender
 
-print(("Flesch Reading Ease:          {}\n" +
-       "Flesch Kincaid Grade:         {}\n" +
-       "SMOG Index:                   {}\n" +
-       "Automated Readability Index:  {}\n" +
-       "Dale Chall Readability Score: {}\n" +
-       "Linsear Write Score:          {}\n" +
-       "Gunning Fog:                  {}\n" +
-       "-" * 79                             +
-       "Readability Consensus:        {}").format(
-       flesch_reading_score, flesch_kincaid_grade, smog_score,
-       ari_score, dale_chall_score, linsear_write_score,
-       gunning_fog_score, readability_consensus))"""
+for publisher in target_names:
+    flesch_reading_score = 0.
+    smog_score           = 0.
+    flesch_kincaid_score = 0.
+    coleman_liau_score   = 0.
+    ari_score            = 0.
+    dale_chall_score     = 0.
+    linsear_write_score  = 0.
+    gunning_fog_score    = 0.
 
-# ********************* PLOTTING **********************
+    pub_txts = df.TEXT[df.PUBLISHER == publisher]
+    if opts.gb:
+        g_counts = {'male': 0, 'female': 0, 'unknown': 0}
+
+    for article_txt in pub_txts:
+        # Readability
+        flesch_reading_score += ts.flesch_reading_ease(article_txt)
+        smog_score           += ts.smog_index(article_txt)
+        flesch_kincaid_score += ts.flesch_kincaid_grade(article_txt)
+        coleman_liau_score   += ts.coleman_liau_index(article_txt)
+        ari_score            += ts.automated_readability_index(article_txt)
+        dale_chall_score     += ts.dale_chall_readability_score(article_txt)
+        linsear_write_score  += ts.linsear_write_formula(article_txt)
+        gunning_fog_score    += ts.gunning_fog(article_txt)
+
+        if opts.gb:
+            # Gender bias
+            for term in article_txt.split():
+                try:
+                    guess = gd.guess(term)
+                except KeyError:
+                    guess = 'unknown'
+                guess = override.get(term.lower(), guess)
+                g_counts[guess] += 1
+
+    flesch_reading_score /= len(pub_txts)
+    smog_score           /= len(pub_txts)
+    flesch_kincaid_score /= len(pub_txts)
+    coleman_liau_score   /= len(pub_txts)
+    ari_score            /= len(pub_txts)
+    dale_chall_score     /= len(pub_txts)
+    linsear_write_score  /= len(pub_txts)
+    gunning_fog_score    /= len(pub_txts)
+
+    readability_consensus = text_standard(flesch_reading_score,
+                                          smog_score,
+                                          flesch_kincaid_score,
+                                          coleman_liau_score,
+                                          ari_score,
+                                          dale_chall_score,
+                                          linsear_write_score,
+                                          gunning_fog_score)
+
+    print(('Average Readability Scores ({})\n'  +
+           '_' * 80 + '\n'                      +
+           'Flesch Reading Ease:          {}\n' +
+           'Flesch Kincaid Grade:         {}\n' +
+           'SMOG Index:                   {}\n' +
+           'Automated Readability Index:  {}\n' +
+           'Dale Chall Readability Score: {}\n' +
+           'Linsear Write Score:          {}\n' +
+           'Gunning Fog:                  {}\n' +
+           '-' * 80 + '\n'                      +
+           'Readability Consensus:        {}\n').format(
+           publisher, flesch_reading_score, flesch_kincaid_score, smog_score,
+           ari_score, dale_chall_score, linsear_write_score,
+           gunning_fog_score, readability_consensus))
+
+    if opts.gb:
+        # Normalize gender counts
+        total_terms = sum(g_counts.values())
+        for k in g_counts.keys():
+            g_counts[k] /= total_terms * 100
+
+        print('Gender Term Distribution:\n' +
+              ''.join('{}: {}%\n'.format(k, v) for k, v in g_counts.items()))
+
 indices = np.arange(len(results)) * 1.3
 
 # Sort results by Kappa
