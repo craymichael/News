@@ -1,10 +1,10 @@
 """BSD 3-Clause License
 
   Copyright (c) 2017, Zach
-  All rights reserved. 
+  All rights reserved.
 
   Redistribution and use in source and binary forms, with or without
-  modification, are permitted provided that the following conditions are met: 
+  modification, are permitted provided that the following conditions are met:
 
   * Redistributions of source code must retain the above copyright notice,
     this list of conditions and the following disclaimer.
@@ -47,6 +47,8 @@ from collections import Counter
 
 from textstat.textstat import textstat as ts
 from gender_detector.gender_detector import GenderDetector
+import nltk
+from nltk.sentiment.vader import SentimentIntensityAnalyzer as SIA
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.feature_extraction.text import HashingVectorizer
@@ -91,7 +93,7 @@ op.add_option('--n_publishers',
               action='store', type=int, default=20,
               help='The top number of publishers to train on.')
 op.add_option('--gender',
-              action='store_true', dest=gb,
+              action='store_true', dest='gb',
               help='Whether to perform gender bias analysis. Very slow.')
 
 
@@ -402,7 +404,7 @@ results.append(benchmark(Pipeline([
 ]), *bm_data))
 
 
-# Readability & Gender Bias
+# Readability & Gender Bias & Sentiment Analysis
 if opts.gb:
     print('WARNING: Gender bias specfied. This may incur a long runtime.')
     gd = GenderDetector('us')
@@ -412,7 +414,16 @@ if opts.gb:
             term, gender = line.replace(' ', '').replace('\n', '').split(',')
             override[term] = gender
 
+# nltk data verification TODO(needs better check)
+try:
+    nltk.data.find('tokenizers/punkt/PY3/english.pickle')
+except LookupError:
+    nltk.download()
+# SA
+sia = SIA()
+
 for publisher in target_names:
+    # Readability Scores
     flesch_reading_score = 0.
     smog_score           = 0.
     flesch_kincaid_score = 0.
@@ -421,6 +432,11 @@ for publisher in target_names:
     dale_chall_score     = 0.
     linsear_write_score  = 0.
     gunning_fog_score    = 0.
+
+    # Sentiment Analysis Scores
+    sa_values = {'compound': 0., 'neg': 0.,
+                 'neu': 0., 'pos': 0.}
+    total_sentences = 0
 
     pub_txts = df.TEXT[df.PUBLISHER == publisher]
     if opts.gb:
@@ -446,6 +462,16 @@ for publisher in target_names:
                     guess = 'unknown'
                 guess = override.get(term.lower(), guess)
                 g_counts[guess] += 1
+
+        # Sentiment analysis
+        a_sentences = nltk.tokenize.sent_tokenize(article_txt)
+        total_sentences += len(a_sentences)
+
+        for s in a_sentences:
+            scores = sia.polarity_scores(s)
+
+            for k, v in scores.items():
+                sa_values[k] += v
 
     flesch_reading_score /= len(pub_txts)
     smog_score           /= len(pub_txts)
@@ -488,6 +514,20 @@ for publisher in target_names:
 
         print('Gender Term Distribution:\n' +
               ''.join('{}: {}%\n'.format(k, v) for k, v in g_counts.items()))
+
+    # SA
+    # Normalize polarity scores
+    for k in sa_values:
+        sa_values[k] /= total_sentences
+
+    print('Sensitivity Analysis Polarity Scores\n' +
+          '_' * 80 + '\n'
+          'Compound: {}\n'
+          'Positive: {}\n'
+          'Neutral:  {}\n'
+          'Negative: {}\n'.format(
+          *(sa_values[k] for k in sorted(sa_values))))
+
 
 indices = np.arange(len(results)) * 1.3
 
